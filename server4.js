@@ -3,39 +3,39 @@ const WebSocket = require('ws');
 const PORT = process.env.PORT || 3000;
 const server = new WebSocket.Server({ port: PORT });
 
-let rooms = {}; // { roomId: [ { socket, id } ] }
+let rooms = {}; // Список кімнат
 
 server.on('connection', (socket) => {
     console.log('Новий клієнт підключився');
-
-    const { roomId, playerId } = findOrCreateRoom(socket);
-
-    // Надсилаємо гравцеві його ID
-    socket.send(JSON.stringify({ type: "PlayerId", data: playerId }));
+    
+    let roomId = findOrCreateRoom(socket);
 
     socket.on('message', (message) => {
-        console.log(`Повідомлення від кімнати ${roomId}:`, message.toString());
+        console.log(`Повідомлення від ${roomId}:`, message.toString());
 
-        // Ретранслюємо всім у кімнаті, окрім відправника
-        rooms[roomId].forEach(player => {
-            if (player.socket !== socket && player.socket.readyState === WebSocket.OPEN) {
-                player.socket.send(message.toString());
+        // Відправка всім у кімнаті
+        rooms[roomId].forEach(client => {
+            if (client !== socket && client.readyState === WebSocket.OPEN) {
+                client.send(message.toString());
             }
         });
     });
 
     socket.on('close', () => {
         console.log(`Гравець покинув кімнату ${roomId}`);
-        rooms[roomId] = rooms[roomId].filter(player => player.socket !== socket);
+        
+        // Фільтруємо кімнату, видаляючи гравця
+        rooms[roomId] = rooms[roomId].filter(client => client !== socket);
 
-        // Повідомити інших, що гравець вийшов
-        rooms[roomId].forEach(player => {
-            if (player.socket.readyState === WebSocket.OPEN) {
-                player.socket.send(JSON.stringify({ type: "Message", data: "PlayerIsExit" }));
+        // Якщо залишився один гравець, повідомляємо його
+        if (rooms[roomId].length === 1) {
+            let remainingPlayer = rooms[roomId][0];
+            if (remainingPlayer.readyState === WebSocket.OPEN) {
+                remainingPlayer.send("PlayerIsExit");
             }
-        });
+        }
 
-        // Якщо кімната пуста — видалити
+        // Якщо кімната спорожніла — видаляємо її
         if (rooms[roomId].length === 0) {
             delete rooms[roomId];
             console.log(`Кімнату ${roomId} закрито`);
@@ -44,35 +44,38 @@ server.on('connection', (socket) => {
 });
 
 function findOrCreateRoom(socket) {
-    // Пошук кімнати з менше ніж 4 гравцями
+    // Шукаємо кімнату з одним гравцем
     for (let room in rooms) {
-        if (rooms[room].length < 4) {
-            const newId = rooms[room].length;
-            rooms[room].push({ socket, id: newId });
-            console.log(`Гравець приєднався до кімнати ${room} як ${newId}`);
+        if (rooms[room].length === 1) {
+            rooms[room].push(socket);
+            console.log(`Гравець приєднався до кімнати ${room}`);
 
-            if (rooms[room].length === 4) {
-                // Коли кімната повна — повідомити всіх
-                rooms[room].forEach(player => {
-                    if (player.socket.readyState === WebSocket.OPEN) {
-                        player.socket.send(JSON.stringify({ type: "Message", data: "GameReady" }));
-                    }
-                });
-            }
+            // Повідомляємо обох гравців, що гра почалася
+            rooms[room].forEach(client => {
+                if (client.readyState === WebSocket.OPEN) {
+                    client.send("GameReady");
+                }
+            });
 
-            return { roomId: room, playerId: newId };
+            return room;
         }
     }
 
-    // Якщо всі кімнати заповнені — створити нову
-    const newRoomId = generateRoomId();
-    rooms[newRoomId] = [{ socket, id: 0 }];
+    // Якщо вільної кімнати немає, створюємо нову
+    let newRoomId = generateRoomId();
+    rooms[newRoomId] = [socket];
     console.log(`Створено нову кімнату: ${newRoomId}`);
-    return { roomId: newRoomId, playerId: 0 };
+    // Повідомляємо обох гравців, що гра почалася
+    rooms[newRoomId].forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send("FirstPlayer");
+        }
+    });
+    return newRoomId;
 }
 
 function generateRoomId() {
-    return Math.random().toString(36).substr(2, 6);
+    return Math.random().toString(36).substr(2, 6); // Випадковий ідентифікатор
 }
 
 console.log(`WebSocket-сервер запущено на порту ${PORT}`);
