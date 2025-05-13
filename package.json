@@ -4,7 +4,7 @@
   "description": "WebSocket сервер на Railway",
   "main": "server4.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server4.js"
   },
   "dependencies": {
     "ws": "^8.15.0"
