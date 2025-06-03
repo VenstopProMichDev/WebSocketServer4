@@ -19,6 +19,9 @@ server.on('connection', (socket) => {
         data: playerId
     }));
 
+    // Надсилаємо всім гравцям у кімнаті список всіх ID
+    broadcastPlayerIds(roomId);
+
     // Якщо в кімнаті вже 4 гравці — надсилаємо GameReady
     if (rooms[roomId].length === 4) {
         rooms[roomId].forEach(client => {
@@ -34,7 +37,7 @@ server.on('connection', (socket) => {
     socket.on('message', (message) => {
         console.log(`Повідомлення від ${roomId}:`, message.toString());
 
-        // Відправка всім у кімнаті
+        // Відправка всім у кімнаті, окрім відправника
         rooms[roomId].forEach(client => {
             if (client !== socket && client.readyState === WebSocket.OPEN) {
                 client.send(message.toString());
@@ -59,6 +62,11 @@ server.on('connection', (socket) => {
                 }));
             }
         });
+
+        // Надсилаємо оновлений список ID
+        if (rooms[roomId]?.length > 0) {
+            broadcastPlayerIds(roomId);
+        }
 
         // Якщо кімната порожня — видаляємо її
         if (rooms[roomId]?.length === 0) {
@@ -85,6 +93,19 @@ function findOrCreateRoom(socket) {
 
 function generateRoomId() {
     return Math.random().toString(36).substr(2, 6);
+}
+
+function broadcastPlayerIds(roomId) {
+    const ids = rooms[roomId].map((client, index) => index);
+
+    rooms[roomId].forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({
+                type: "AllPlayerIds",
+                data: ids
+            }));
+        }
+    });
 }
 
 console.log(`WebSocket-сервер запущено на порту ${PORT}`);
