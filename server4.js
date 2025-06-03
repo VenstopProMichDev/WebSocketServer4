@@ -3,99 +3,48 @@ const WebSocket = require('ws');
 const PORT = process.env.PORT || 3000;
 const server = new WebSocket.Server({ port: PORT });
 
-let rooms = {}; // Список кімнат
-let playerSocketMap = new Map(); // Socket => playerId
+let rooms = {}; // { roomId: [ { socket, playerId } ] }
 
 server.on('connection', (socket) => {
     console.log('Новий клієнт підключився');
 
-    let roomId = findOrCreateRoom(socket);
-    let playerId = rooms[roomId].indexOf(socket);
-    playerSocketMap.set(socket, playerId);
+    const { roomId, playerId } = findOrCreateRoom(socket);
 
-    // Надсилаємо гравцеві його ID
+    // Відправляємо гравцю його ID
     socket.send(JSON.stringify({
-        type: "PlayerId",
+        type: 'PlayerId',
         data: playerId
     }));
 
-    // Надсилаємо всім гравцям у кімнаті список ID + you
-    broadcastPlayerIds(roomId);
-
-    // Якщо в кімнаті вже 4 гравці — надсилаємо GameReady
-    if (rooms[roomId].length === 4) {
-        rooms[roomId].forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                    type: "Message",
-                    data: "GameReady"
-                }));
-            }
-        });
-    }
-
     socket.on('message', (message) => {
-        let msg;
-        try {
-            msg = JSON.parse(message);
-        } catch (e) {
-            console.error("Невірний формат повідомлення:", message.toString());
-            return;
-        }
+        console.log(`Повідомлення від ${roomId}:`, message.toString());
 
-        console.log(`Повідомлення від ${roomId}:`, msg);
-
-        // Обробка закриття кімнати
-        if (msg.type === "CloseRoom") {
-            console.log(`Гравець ${playerId} ініціював закриття кімнати ${roomId}`);
-
-            rooms[roomId]?.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify({
-                        type: "RoomClosed",
-                        data: playerId
-                    }));
-                    client.close();
-                }
-            });
-
-            delete rooms[roomId];
-            console.log(`Кімнату ${roomId} закрито вручну`);
-            return;
-        }
-
-        // Відправка всім іншим гравцям
-        rooms[roomId].forEach(client => {
-            if (client !== socket && client.readyState === WebSocket.OPEN) {
-                client.send(message.toString());
+        // Відправка всім гравцям у кімнаті, крім відправника
+        rooms[roomId].forEach(player => {
+            if (player.socket !== socket && player.socket.readyState === WebSocket.OPEN) {
+                player.socket.send(message.toString());
             }
         });
     });
 
     socket.on('close', () => {
-        const playerId = playerSocketMap.get(socket);
-        console.log(`Гравець ${playerId} покинув кімнату ${roomId}`);
+        console.log(`Гравець покинув кімнату ${roomId}`);
 
-        rooms[roomId] = rooms[roomId].filter(client => client !== socket);
-        playerSocketMap.delete(socket);
+        rooms[roomId] = rooms[roomId].filter(player => player.socket !== socket);
 
-        // Повідомити інших
-        rooms[roomId]?.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                    type: "PlayerDisconnected",
-                    data: playerId
+        // Якщо залишився один гравець, повідомляємо його
+        if (rooms[roomId].length === 1) {
+            let remaining = rooms[roomId][0];
+            if (remaining.socket.readyState === WebSocket.OPEN) {
+                remaining.socket.send(JSON.stringify({
+                    type: 'Message',
+                    data: 'PlayerIsExit'
                 }));
             }
-        });
-
-        // Оновити список гравців
-        if (rooms[roomId]?.length > 0) {
-            broadcastPlayerIds(roomId);
         }
 
-        // Видалити кімнату, якщо порожня
-        if (rooms[roomId]?.length === 0) {
+        // Якщо кімната порожня — видаляємо її
+        if (rooms[roomId].length === 0) {
             delete rooms[roomId];
             console.log(`Кімнату ${roomId} закрито`);
         }
@@ -103,35 +52,36 @@ server.on('connection', (socket) => {
 });
 
 function findOrCreateRoom(socket) {
-    for (let room in rooms) {
-        if (rooms[room].length < 4) {
-            rooms[room].push(socket);
-            console.log(`Гравець приєднався до кімнати ${room}`);
-            return room;
+    for (let roomId in rooms) {
+        if (rooms[roomId].length < 4) {
+            let playerId = rooms[roomId].length + 1;
+            rooms[roomId].push({ socket, playerId });
+            console.log(`Гравець приєднався до кімнати ${roomId} як гравець ${playerId}`);
+
+            if (rooms[roomId].length === 4) {
+                rooms[roomId].forEach(player => {
+                    if (player.socket.readyState === WebSocket.OPEN) {
+                        player.socket.send(JSON.stringify({
+                            type: 'Message',
+                            data: 'GameReady'
+                        }));
+                    }
+                });
+            }
+
+            return { roomId, playerId };
         }
     }
 
+    // Створюємо нову кімнату
     let newRoomId = generateRoomId();
-    rooms[newRoomId] = [socket];
+    rooms[newRoomId] = [{ socket, playerId: 1 }];
     console.log(`Створено нову кімнату: ${newRoomId}`);
-    return newRoomId;
+    return { roomId: newRoomId, playerId: 1 };
 }
 
 function generateRoomId() {
     return Math.random().toString(36).substr(2, 6);
-}
-
-function broadcastPlayerIds(roomId) {
-    rooms[roomId].forEach((client, index) => {
-        if (client.readyState === WebSocket.OPEN) {
-            const playerList = rooms[roomId].map((_, i) => ({ id: i }));
-            client.send(JSON.stringify({
-                type: "AllPlayerIds",
-                you: index,
-                players: playerList
-            }));
-        }
-    });
 }
 
 console.log(`WebSocket-сервер запущено на порту ${PORT}`);
