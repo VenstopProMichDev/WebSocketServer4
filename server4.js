@@ -19,7 +19,7 @@ server.on('connection', (socket) => {
         data: playerId
     }));
 
-    // Надсилаємо всім гравцям у кімнаті список всіх ID
+    // Надсилаємо всім гравцям у кімнаті список ID + you
     broadcastPlayerIds(roomId);
 
     // Якщо в кімнаті вже 4 гравці — надсилаємо GameReady
@@ -35,9 +35,36 @@ server.on('connection', (socket) => {
     }
 
     socket.on('message', (message) => {
-        console.log(`Повідомлення від ${roomId}:`, message.toString());
+        let msg;
+        try {
+            msg = JSON.parse(message);
+        } catch (e) {
+            console.error("Невірний формат повідомлення:", message.toString());
+            return;
+        }
 
-        // Відправка всім у кімнаті, окрім відправника
+        console.log(`Повідомлення від ${roomId}:`, msg);
+
+        // Обробка закриття кімнати
+        if (msg.type === "CloseRoom") {
+            console.log(`Гравець ${playerId} ініціював закриття кімнати ${roomId}`);
+
+            rooms[roomId]?.forEach(client => {
+                if (client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify({
+                        type: "RoomClosed",
+                        data: playerId
+                    }));
+                    client.close();
+                }
+            });
+
+            delete rooms[roomId];
+            console.log(`Кімнату ${roomId} закрито вручну`);
+            return;
+        }
+
+        // Відправка всім іншим гравцям
         rooms[roomId].forEach(client => {
             if (client !== socket && client.readyState === WebSocket.OPEN) {
                 client.send(message.toString());
@@ -49,11 +76,10 @@ server.on('connection', (socket) => {
         const playerId = playerSocketMap.get(socket);
         console.log(`Гравець ${playerId} покинув кімнату ${roomId}`);
 
-        // Видаляємо гравця
         rooms[roomId] = rooms[roomId].filter(client => client !== socket);
         playerSocketMap.delete(socket);
 
-        // Повідомляємо інших хто саме вийшов
+        // Повідомити інших
         rooms[roomId]?.forEach(client => {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(JSON.stringify({
@@ -63,12 +89,12 @@ server.on('connection', (socket) => {
             }
         });
 
-        // Надсилаємо оновлений список ID
+        // Оновити список гравців
         if (rooms[roomId]?.length > 0) {
             broadcastPlayerIds(roomId);
         }
 
-        // Якщо кімната порожня — видаляємо її
+        // Видалити кімнату, якщо порожня
         if (rooms[roomId]?.length === 0) {
             delete rooms[roomId];
             console.log(`Кімнату ${roomId} закрито`);
@@ -96,13 +122,13 @@ function generateRoomId() {
 }
 
 function broadcastPlayerIds(roomId) {
-    const ids = rooms[roomId].map((client, index) => index);
-
-    rooms[roomId].forEach((client) => {
+    rooms[roomId].forEach((client, index) => {
         if (client.readyState === WebSocket.OPEN) {
+            const playerList = rooms[roomId].map((_, i) => ({ id: i }));
             client.send(JSON.stringify({
                 type: "AllPlayerIds",
-                data: ids
+                you: index,
+                players: playerList
             }));
         }
     });
