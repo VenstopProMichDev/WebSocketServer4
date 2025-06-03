@@ -24,13 +24,20 @@ server.on('connection', (socket) => {
         data: playerId
     }));
 
-    // 2) Повідомляємо всіх у кімнаті, що зайшов новий гравець
+    // 2) Надсилаємо цьому гравцю список всіх ID у кімнаті
+    const allIds = rooms[roomId].map(p => p.playerId);
+    socket.send(JSON.stringify({
+        type: 'AllPlayerIds',
+        data: allIds
+    }));
+
+    // 3) Повідомляємо всіх у кімнаті (включно з новим), що зайшов новий гравець
     broadcastToRoom(roomId, {
         type: 'PlayerJoined',
         data: playerId
     });
 
-    // 3) Якщо в кімнаті вже 4 гравці — надсилаємо GameReady
+    // 4) Якщо в кімнаті вже 4 гравці — надсилаємо GameReady
     if (rooms[roomId].length === 4) {
         broadcastToRoom(roomId, {
             type: 'Message',
@@ -38,7 +45,7 @@ server.on('connection', (socket) => {
         });
     }
 
-    // 4) Обробка вхідних повідомлень від клієнта
+    // 5) Обробка вхідних повідомлень від клієнта
     socket.on('message', (rawMessage) => {
         let msg;
         try {
@@ -48,28 +55,25 @@ server.on('connection', (socket) => {
             return;
         }
 
-        console.log(`📨 Повідомлення від гравця ${playerId} в кімнаті ${roomId}:`, msg);
+        console.log(`📨 Повідомлення від гравця ${playerId} у кімнаті ${roomId}:`, msg);
 
         // Якщо клієнт прислав власне повідомлення “закрити кімнату”:
         if (msg.type === 'CloseRoom') {
             console.log(`❗ Гравець ${playerId} ініціював закриття кімнати ${roomId}`);
-            // Повідомляємо всіх учасників про закриття кімнати
             broadcastToRoom(roomId, {
                 type: 'RoomClosed',
                 data: playerId
             });
-            // Закриваємо кожному сокет
             rooms[roomId].forEach(p => {
                 if (p.socket.readyState === WebSocket.OPEN) {
                     p.socket.close();
                 }
             });
-            // Видаляємо саму кімнату
             delete rooms[roomId];
             return;
         }
 
-        // Якщо це інше повідомлення — розсилаємо його решті гравців у кімнаті
+        // Інакше — розсилаємо повідомлення решті гравців у кімнаті
         rooms[roomId].forEach(p => {
             if (p.socket !== socket && p.socket.readyState === WebSocket.OPEN) {
                 p.socket.send(rawMessage);
@@ -77,9 +81,8 @@ server.on('connection', (socket) => {
         });
     });
 
-    // 5) Обробка дисконекту клієнта
+    // 6) Обробка дисконекту клієнта
     socket.on('close', () => {
-        // Знаходимо і видаляємо гравця з масиву
         const idx = rooms[roomId].findIndex(p => p.socket === socket);
         if (idx === -1) return;
 
@@ -109,7 +112,6 @@ server.on('connection', (socket) => {
 function findOrCreateRoom(socket) {
     for (let roomId in rooms) {
         if (rooms[roomId].length < 4) {
-            // Визначаємо вільний playerId (0–3)
             const usedIds = rooms[roomId].map(p => p.playerId);
             let playerId = 0;
             while (usedIds.includes(playerId)) {
@@ -121,7 +123,6 @@ function findOrCreateRoom(socket) {
         }
     }
 
-    // Якщо вільних кімнат немає, створюємо нову
     const newRoomId = generateRoomId();
     rooms[newRoomId] = [{ socket, playerId: 0 }];
     console.log(`Створено нову кімнату: ${newRoomId} (playerId=0)`);
@@ -145,7 +146,7 @@ function broadcastToRoom(roomId, messageObj) {
 }
 
 /**
- * Закриває НЕ ОДНУ кімнату, а всі активні кімнати.
+ * Закриває всі активні кімнати.
  * Для кожного гравця у кожній кімнаті надсилає {type: 'RoomClosedAll'},
  * потім закриває його сокет і видаляє кімнату.
  */
@@ -166,7 +167,7 @@ function closeAllRooms() {
     console.log('▶️ Усі кімнати закриті');
 }
 
-// Приклад: можна викликати closeAllRooms() за якоюсь подією, наприклад:
+// Приклад виклику closeAllRooms():
 // setTimeout(() => closeAllRooms(), 60000); // закриє всі кімнати через хвилину
 
 console.log(`WebSocket-сервер запущено на порту ${PORT}`);
